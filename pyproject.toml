@@ -5,16 +5,21 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "fastapi>=0.122.0",
+    "httpx>=0.28.1",
     "keras>=3.12.0",
     "matplotlib>=3.10.7",
     "numpy>=2.3.5",
     "onnx>=1.19.1",
+    "onnxruntime>=1.23.2",
     "onnxscript>=0.5.6",
     "pandas>=2.3.3",
+    "pydantic>=2.12.5",
     "scikit-learn>=1.7.2",
     "seaborn>=0.13.2",
     "setuptools>=80.9.0",
     "tensorflow>=2.20.0",
     "tf2onnx>=1.8.4",
     "torch>=2.9.1",
+    "uvicorn>=0.38.0",
 ]
