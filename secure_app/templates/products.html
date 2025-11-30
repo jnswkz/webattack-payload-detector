@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VulnShop - Products</title>
+    <title>SecureShop - Products</title>
     <style>
         * {
             margin: 0;
@@ -16,7 +16,7 @@
             min-height: 100vh;
         }
         nav {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
             padding: 1rem 2rem;
             display: flex;
             justify-content: space-between;
@@ -66,7 +66,7 @@
         }
         .search-form input:focus {
             outline: none;
-            border-color: #667eea;
+            border-color: #11998e;
         }
         .search-form select {
             padding: 0.8rem 1rem;
@@ -77,7 +77,7 @@
         }
         .btn-search {
             padding: 0.8rem 2rem;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
             color: white;
             border: none;
             border-radius: 8px;
@@ -106,7 +106,7 @@
         }
         .product-image {
             height: 150px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
             display: flex;
             justify-content: center;
             align-items: center;
@@ -132,7 +132,7 @@
         .price {
             font-size: 1.25rem;
             font-weight: bold;
-            color: #667eea;
+            color: #11998e;
         }
         .stock {
             font-size: 0.8rem;
@@ -141,31 +141,36 @@
         .category-badge {
             display: inline-block;
             padding: 0.25rem 0.75rem;
-            background: #e0e7ff;
-            color: #667eea;
+            background: #e0f2f1;
+            color: #11998e;
             border-radius: 20px;
             font-size: 0.75rem;
             margin-bottom: 0.5rem;
         }
-        .hint-box {
+        .info-box {
             margin-top: 1rem;
             padding: 1rem;
-            background: #fff3cd;
+            background: #e8f5e9;
             border-radius: 8px;
             font-size: 0.85rem;
         }
-        .hint-box h4 {
-            color: #856404;
+        .info-box h4 {
+            color: #2e7d32;
             margin-bottom: 0.5rem;
         }
-        .hint-box code {
-            background: #ffeeba;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-family: monospace;
+        .attack-blocked-banner {
+            background: #ff4757;
+            color: white;
+            padding: 1.5rem;
+            border-radius: 10px;
+            margin-bottom: 2rem;
+            text-align: center;
         }
-        .warning-banner {
-            background: #ff6b6b;
+        .attack-blocked-banner h3 {
+            margin-bottom: 0.5rem;
+        }
+        .info-banner {
+            background: #17a2b8;
             color: white;
             text-align: center;
             padding: 0.5rem;
@@ -183,11 +188,11 @@
     </style>
 </head>
 <body>
-    <div class="warning-banner">
-        ⚠️ WARNING: This is a vulnerable demo application. DO NOT use in production!
+    <div class="info-banner">
+        🛡️ Protected by ML-based Attack Detection | SQL vulnerabilities still exist but attacks are blocked
     </div>
     <nav>
-        <a href="/" class="logo">🛒 VulnShop</a>
+        <a href="/" class="logo">🛡️ SecureShop</a>
         <div class="nav-links">
             <a href="/">Home</a>
             {% if session.get('logged_in') %}
@@ -200,6 +205,14 @@
     </nav>
     
     <main class="container">
+        {% if attack_blocked %}
+        <div class="attack-blocked-banner">
+            <h3>🚨 ATTACK DETECTED & BLOCKED!</h3>
+            <p>Your search request was flagged as a potential SQL injection attack.</p>
+            <p>Confidence: {{ "%.1f"|format(attack_probability * 100) }}%</p>
+        </div>
+        {% endif %}
+        
         <div class="search-section">
             <form class="search-form" method="GET" action="/products">
                 <input type="text" name="search" placeholder="Search products..." value="{{ search }}">
@@ -212,15 +225,14 @@
                 </select>
                 <button type="submit" class="btn-search">🔍 Search</button>
             </form>
+            
+            <div class="info-box">
+                <h4>🛡️ ML Protection Active</h4>
+                <p>This search is protected by our RNN-based attack detection model. SQL injection attempts will be detected and blocked automatically.</p>
+            </div>
         </div>
         
-        {% if error %}
-        <div style="background: #ffebee; border: 1px solid #f44336; color: #c62828; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
-            <strong>SQL Error:</strong> {{ error }}
-        </div>
-        {% endif %}
-        
-        {% if products %}
+        {% if products and not attack_blocked %}
         <div class="products-grid">
             {% for product in products %}
             <div class="product-card">
@@ -237,7 +249,7 @@
             </div>
             {% endfor %}
         </div>
-        {% else %}
+        {% elif not attack_blocked %}
         <div class="no-products">
             <h3>No products found</h3>
             <p>Try a different search term or browse all products.</p>

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SecureShop - Login</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        nav {
+            background: rgba(0,0,0,0.2);
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        nav .logo {
+            color: white;
+            font-size: 1.5rem;
+            font-weight: bold;
+            text-decoration: none;
+        }
+        nav .nav-links a {
+            color: white;
+            text-decoration: none;
+            margin-left: 1.5rem;
+            padding: 0.5rem 1rem;
+            border-radius: 5px;
+            transition: background 0.3s;
+        }
+        nav .nav-links a:hover {
+            background: rgba(255,255,255,0.2);
+        }
+        .login-container {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 2rem;
+        }
+        .login-box {
+            background: white;
+            padding: 2.5rem;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            width: 100%;
+            max-width: 400px;
+        }
+        .login-box h2 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 1.5rem;
+        }
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #555;
+            font-weight: 500;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 0.8rem 1rem;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: border-color 0.3s;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: #11998e;
+        }
+        .btn-login {
+            width: 100%;
+            padding: 1rem;
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        .btn-login:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(17, 153, 142, 0.4);
+        }
+        .error-message {
+            background: #ffe0e0;
+            color: #c00;
+            padding: 0.8rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+        .attack-blocked {
+            background: #ff4757;
+            color: white;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            text-align: center;
+            font-weight: bold;
+        }
+        .info-box {
+            margin-top: 1.5rem;
+            padding: 1rem;
+            background: #e8f5e9;
+            border-radius: 8px;
+            font-size: 0.85rem;
+        }
+        .info-box h4 {
+            color: #2e7d32;
+            margin-bottom: 0.5rem;
+        }
+        .info-banner {
+            background: #17a2b8;
+            color: white;
+            text-align: center;
+            padding: 0.5rem;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="info-banner">
+        🛡️ Protected by ML-based Attack Detection | SQL vulnerabilities still exist but attacks are blocked
+    </div>
+    <nav>
+        <a href="/" class="logo">🛡️ SecureShop</a>
+        <div class="nav-links">
+            <a href="/">Home</a>
+            <a href="/products">Products</a>
+        </div>
+    </nav>
+    <main class="login-container">
+        <div class="login-box">
+            <h2>🔐 Sign In</h2>
+            
+            {% if attack_blocked %}
+            <div class="attack-blocked">
+                🚨 ATTACK DETECTED & BLOCKED!<br>
+                Your request has been flagged as malicious.
+            </div>
+            {% endif %}
+            
+            {% if error and not attack_blocked %}
+            <div class="error-message">{{ error }}</div>
+            {% endif %}
+            
+            <form method="POST" action="/login">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" name="username" placeholder="Enter username" required>
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" placeholder="Enter password" required>
+                </div>
+                <button type="submit" class="btn-login">Sign In</button>
+            </form>
+            
+            <div class="info-box">
+                <h4>🛡️ ML Protection Active</h4>
+                <p>This login form is protected by our RNN-based attack detection model. SQL injection attempts will be detected and blocked automatically.</p>
+                <p style="margin-top: 0.5rem; color: #666;">Note: The underlying SQL code is still vulnerable - we just detect and block attacks!</p>
+            </div>
+        </div>
+    </main>
+</body>
+</html>
