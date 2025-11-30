@@ -1,25 +1,53 @@
 import numpy as np
 import onnxruntime as ort
 import json
+import re
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 from contextlib import asynccontextmanager
 from pathlib import Path
 import uvicorn
 
 # Get absolute path to model and config files
 BASE_DIR = Path(__file__).resolve().parent.parent
-MODEL_PATH = BASE_DIR / "models" / "simple_rnn_fixed.onnx"  # Fixed model without classification
-COLUMNS_PATH = BASE_DIR / "models" / "columns_fixed.json"
-STATS_PATH = BASE_DIR / "models" / "feature_stats_fixed.json"
+MODEL_PATH = BASE_DIR / "models" / "sqli_lstm.onnx"
+TOKENIZER_PATH = BASE_DIR / "models" / "sqli_tokenizer.json"
 
 session = None
-columns_config = None
-feature_stats = None
+tokenizer_config = None
+
+
+def normalize_sql_input(text: str) -> str:
+    """
+    Normalize input to match training data format (add spaces around operators).
+    The training data has specific formatting with spaces around operators.
+    """
+    text = re.sub(r'([=<>!]+)', r'  \1  ', text)  # Operators
+    text = re.sub(r'([()])', r'  \1  ', text)      # Parentheses
+    text = re.sub(r',', ' , ', text)               # Commas
+    text = re.sub(r"'", " ' ", text)               # Single quotes
+    text = re.sub(r'"', ' " ', text)               # Double quotes
+    text = re.sub(r'\s+', ' ', text)               # Normalize multiple spaces
+    return text.strip().lower()
+
+
+def encode_text(text: str, char_to_idx: dict, max_len: int) -> List[int]:
+    """Encode text to sequence of character indices"""
+    encoded = []
+    for char in text[:max_len]:
+        encoded.append(char_to_idx.get(char, char_to_idx.get('<UNK>', 1)))
+    
+    # Pad if necessary
+    pad_idx = char_to_idx.get('<PAD>', 0)
+    while len(encoded) < max_len:
+        encoded.append(pad_idx)
+    
+    return encoded
+
 
 def load_model():
-    global session, columns_config, feature_stats
+    global session, tokenizer_config
     try:
         # Load ONNX model
         if not MODEL_PATH.exists():
@@ -27,48 +55,47 @@ def load_model():
         session = ort.InferenceSession(str(MODEL_PATH))
         print(f"Model loaded successfully from {MODEL_PATH}")
         
-        # Load columns config
-        if not COLUMNS_PATH.exists():
-            raise FileNotFoundError(f"Columns config not found: {COLUMNS_PATH}")
-        with open(COLUMNS_PATH, "r") as f:
-            columns_config = json.load(f)
-        print(f"Columns config loaded: {columns_config['feature_columns']}")
-        
-        # Load feature stats
-        if not STATS_PATH.exists():
-            raise FileNotFoundError(f"Feature stats not found: {STATS_PATH}")
-        with open(STATS_PATH, "r") as f:
-            feature_stats = json.load(f)
-        print(f"Feature stats loaded for {len(feature_stats)} features")
+        # Load tokenizer config
+        if not TOKENIZER_PATH.exists():
+            raise FileNotFoundError(f"Tokenizer config not found: {TOKENIZER_PATH}")
+        with open(TOKENIZER_PATH, "r", encoding="utf-8") as f:
+            tokenizer_config = json.load(f)
+        print(f"Tokenizer loaded: vocab_size={tokenizer_config['vocab_size']}, max_len={tokenizer_config['max_len']}")
         
     except Exception as e:
         print(f"Error loading model: {e}")
         raise e
 
-def preprocess_request(raw_request: Dict[str, Any]) -> np.ndarray:
+
+def predict_sqli(text: str) -> tuple[float, str]:
     """
-    Convert raw HTTP request data to normalized features.
-    Uses 7 features (no classification column - that was data leakage).
+    Predict if a text contains SQL injection.
+    Returns (probability, label).
     """
-    features = []
+    if session is None or tokenizer_config is None:
+        raise RuntimeError("Model not loaded")
     
-    for column in columns_config["feature_columns"]:
-        raw_value = raw_request.get(column, None)
-        encoding_map = columns_config["encodings"].get(column, {})
-        
-        if raw_value is not None and str(raw_value) in encoding_map:
-            encoded_value = encoding_map[str(raw_value)]
-        else:
-            # Unknown value - use mean (neutral in z-score)
-            encoded_value = feature_stats[column]["mean"]
-        
-        # Z-score normalize
-        mean = feature_stats[column]["mean"]
-        std = feature_stats[column]["std"]
-        normalized_value = (encoded_value - mean) / std if std > 0 else 0.0
-        features.append(normalized_value)
+    # Normalize input to match training data format
+    normalized = normalize_sql_input(text)
     
-    return np.array(features, dtype=np.float32)
+    # Encode to character indices
+    char_to_idx = tokenizer_config['char_to_idx']
+    max_len = tokenizer_config['max_len']
+    encoded = encode_text(normalized, char_to_idx, max_len)
+    
+    # Prepare input for ONNX (batch_size=1, seq_len=max_len)
+    input_data = np.array([encoded], dtype=np.int64)
+    
+    # Run inference
+    input_name = session.get_inputs()[0].name
+    outputs = session.run(None, {input_name: input_data})
+    probability = float(outputs[0][0][0])
+    
+    # Threshold at 0.5
+    label = "SQLi" if probability >= 0.5 else "Normal"
+    
+    return probability, label
+
 
 # Lifespan context manager
 @asynccontextmanager
@@ -76,171 +103,112 @@ async def lifespan(app: FastAPI):
     load_model()
     yield
 
+
 # Initialize FastAPI app
 app = FastAPI(
-    title="Web Attack Payload Detector",
-    description="API for detecting web attack payloads using RNN model",
-    version="1.0.0",
+    title="SQL Injection Detector",
+    description="API for detecting SQL injection attacks using LSTM model",
+    version="2.0.0",
     lifespan=lifespan
 )
 
-# Request/Response models
-class RawHttpRequest(BaseModel):
-    """
-    Raw HTTP request fields matching the training data columns.
-    All fields are strings (ordinal encoded during training).
-    """
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "Method": "GET",
-                "host": "localhost:8080",
-                "cookie": "JSESSIONID=1F767F17239C9B670A39E9B10C3825F4",
-                "connection": "close",
-                "lenght": None,
-                "content": None,
-                "URL": "http://localhost:8080/tienda1/index.jsp HTTP/1.1"
-            }
-        }
-    )
-    Method: Optional[str] = None
-    host: Optional[str] = None
-    cookie: Optional[str] = None
-    connection: Optional[str] = None
-    lenght: Optional[str] = None  # String like "Content-Length: 68" or None
-    content: Optional[str] = None  # POST body content or None
-    URL: Optional[str] = None
 
-class PredictionRequest(BaseModel):
-    """Pre-normalized feature values (8 features required)"""
+# Request/Response models
+class TextRequest(BaseModel):
+    """Request with text to analyze for SQL injection"""
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "features": [0.1, -0.5, 0.3, 0.8, -0.2, 0.0, 0.5, 0.2]
+                "text": "' OR '1'='1' --"
             }
         }
     )
-    features: List[float]
+    text: str
+
 
 class PredictionResponse(BaseModel):
-    prediction: int  # 0 = Normal, 1 = Attack
+    prediction: int  # 0 = Normal, 1 = SQLi
     probability: float
     label: str
+    normalized_input: Optional[str] = None
 
-class BatchRawRequest(BaseModel):
-    requests: List[RawHttpRequest]
+
+class BatchTextRequest(BaseModel):
+    texts: List[str]
+
 
 class BatchPredictionResponse(BaseModel):
     predictions: List[PredictionResponse]
 
+
 class HealthResponse(BaseModel):
     status: str
     model_loaded: bool
-    config_loaded: bool
+    tokenizer_loaded: bool
+
 
 # Endpoints
 @app.get("/", response_model=dict)
 async def root():
     return {
-        "message": "Web Attack Payload Detector API",
+        "message": "SQL Injection Detector API",
+        "version": "2.0.0",
+        "model": "LSTM character-level classifier",
         "docs": "/docs",
         "endpoints": {
-            "/predict": "POST - Predict with pre-normalized features",
-            "/predict/raw": "POST - Predict with raw HTTP request data",
-            "/predict/batch": "POST - Batch prediction with raw requests",
+            "/predict": "POST - Detect SQLi in text",
+            "/predict/batch": "POST - Batch SQLi detection",
             "/health": "GET - Health check",
             "/model/info": "GET - Model information"
         }
     }
 
+
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     return HealthResponse(
-        status="healthy" if session and columns_config and feature_stats else "unhealthy",
+        status="healthy" if session and tokenizer_config else "unhealthy",
         model_loaded=session is not None,
-        config_loaded=columns_config is not None and feature_stats is not None
+        tokenizer_loaded=tokenizer_config is not None
     )
 
+
 @app.post("/predict", response_model=PredictionResponse)
-async def predict(request: PredictionRequest):
+async def predict(request: TextRequest):
     """
-    Predict using pre-normalized feature values.
-    Features should be z-score normalized (8 features required).
+    Detect SQL injection in the provided text.
+    The text will be normalized and analyzed using a character-level LSTM model.
     """
-    if session is None:
+    if session is None or tokenizer_config is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
     
     try:
-        features = np.array(request.features, dtype=np.float32)
-        input_data = features.reshape(1, -1, 1)
-        
-        input_name = session.get_inputs()[0].name
-        outputs = session.run(None, {input_name: input_data})
-        probability = float(outputs[0][0][0])
-        
-        prediction = 1 if probability >= 0.5 else 0
-        label = "Attack" if prediction == 1 else "Normal"
+        probability, label = predict_sqli(request.text)
+        prediction = 1 if label == "SQLi" else 0
         
         return PredictionResponse(
             prediction=prediction,
             probability=probability,
-            label=label
+            label=label,
+            normalized_input=normalize_sql_input(request.text)
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Prediction error: {str(e)}")
 
-@app.post("/predict/raw", response_model=PredictionResponse)
-async def predict_raw(request: RawHttpRequest):
-    """
-    Predict using raw HTTP request data.
-    The API will handle encoding and normalization automatically.
-    """
-    if session is None or columns_config is None or feature_stats is None:
-        raise HTTPException(status_code=503, detail="Model or config not loaded")
-    
-    try:
-        # Convert to dict and preprocess
-        raw_data = request.model_dump()
-        features = preprocess_request(raw_data)
-        input_data = features.reshape(1, -1, 1)
-        
-        input_name = session.get_inputs()[0].name
-        outputs = session.run(None, {input_name: input_data})
-        probability = float(outputs[0][0][0])
-        
-        prediction = 1 if probability >= 0.5 else 0
-        label = "Attack" if prediction == 1 else "Normal"
-        
-        return PredictionResponse(
-            prediction=prediction,
-            probability=probability,
-            label=label
-        )
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Prediction error: {str(e)}")
 
 @app.post("/predict/batch", response_model=BatchPredictionResponse)
-async def predict_batch(request: BatchRawRequest):
+async def predict_batch(request: BatchTextRequest):
     """
-    Predict multiple raw HTTP requests at once.
+    Detect SQL injection in multiple texts at once.
     """
-    if session is None or columns_config is None or feature_stats is None:
-        raise HTTPException(status_code=503, detail="Model or config not loaded")
+    if session is None or tokenizer_config is None:
+        raise HTTPException(status_code=503, detail="Model not loaded")
     
     try:
         predictions = []
-        input_name = session.get_inputs()[0].name
-        
-        for raw_request in request.requests:
-            raw_data = raw_request.model_dump()
-            features = preprocess_request(raw_data)
-            input_data = features.reshape(1, -1, 1)
-            
-            outputs = session.run(None, {input_name: input_data})
-            probability = float(outputs[0][0][0])
-            
-            prediction = 1 if probability >= 0.5 else 0
-            label = "Attack" if prediction == 1 else "Normal"
+        for text in request.texts:
+            probability, label = predict_sqli(text)
+            prediction = 1 if label == "SQLi" else 0
             
             predictions.append(PredictionResponse(
                 prediction=prediction,
@@ -252,10 +220,11 @@ async def predict_batch(request: BatchRawRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Batch prediction error: {str(e)}")
 
+
 @app.get("/model/info")
 async def model_info():
     """
-    Get information about the loaded model and configuration.
+    Get information about the loaded model and tokenizer.
     """
     if session is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
@@ -265,54 +234,59 @@ async def model_info():
     
     return {
         "model": {
+            "type": "LSTM character-level classifier",
+            "file": str(MODEL_PATH.name),
             "inputs": [{"name": i.name, "shape": i.shape, "type": i.type} for i in inputs],
             "outputs": [{"name": o.name, "shape": o.shape, "type": o.type} for o in outputs]
         },
-        "feature_columns": columns_config["feature_columns"] if columns_config else None,
-        "num_features": len(columns_config["feature_columns"]) if columns_config else None
+        "tokenizer": {
+            "vocab_size": tokenizer_config["vocab_size"] if tokenizer_config else None,
+            "max_len": tokenizer_config["max_len"] if tokenizer_config else None
+        },
+        "preprocessing": {
+            "normalization": "Adds spaces around operators to match training format",
+            "encoding": "Character-level with vocabulary mapping"
+        }
     }
 
+
 @app.post("/debug/predict")
-async def debug_predict(request: PredictionRequest):
+async def debug_predict(request: TextRequest):
     """
-    Debug endpoint to see raw model output.
+    Debug endpoint to see preprocessing and raw model output.
     """
-    if session is None:
+    if session is None or tokenizer_config is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
     
     try:
-        features = np.array(request.features, dtype=np.float32)
-        input_data = features.reshape(1, -1, 1)
+        # Normalize
+        normalized = normalize_sql_input(request.text)
         
+        # Encode
+        char_to_idx = tokenizer_config['char_to_idx']
+        max_len = tokenizer_config['max_len']
+        encoded = encode_text(normalized, char_to_idx, max_len)
+        
+        # Prepare input
+        input_data = np.array([encoded], dtype=np.int64)
+        
+        # Run inference
         input_name = session.get_inputs()[0].name
         outputs = session.run(None, {input_name: input_data})
+        probability = float(outputs[0][0][0])
         
         return {
-            "input_shape": input_data.shape,
-            "input_values": input_data.tolist(),
+            "original_text": request.text,
+            "normalized_text": normalized,
+            "encoded_first_50": encoded[:50],
+            "input_shape": list(input_data.shape),
             "raw_output": outputs[0].tolist(),
-            "probability": float(outputs[0][0][0]),
-            "prediction": 1 if float(outputs[0][0][0]) >= 0.5 else 0
+            "probability": probability,
+            "prediction": "SQLi" if probability >= 0.5 else "Normal"
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-@app.post("/debug/preprocess")
-async def debug_preprocess(request: RawHttpRequest):
-    """
-    Debug endpoint to see preprocessing steps.
-    """
-    if columns_config is None or feature_stats is None:
-        raise HTTPException(status_code=503, detail="Config not loaded")
-    
-    raw_data = request.model_dump()
-    features = preprocess_request(raw_data)
-    
-    return {
-        "raw_input": raw_data,
-        "feature_columns": columns_config["feature_columns"],
-        "normalized_features": features.tolist()
-    }
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
